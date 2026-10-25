@@ -1,0 +1,173 @@
+﻿{
+  "name": "My workflow",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "clientes",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        -496,
+        0
+      ],
+      "id": "cbe3ee90-ae8a-42c6-85dc-2533734f415b",
+      "name": "Webhook",
+      "webhookId": "dade1e5e-614d-453d-9039-b8573dfe1d40"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        496,
+        16
+      ],
+      "id": "312f6ba0-bfdf-4e7f-a455-43f644c7fb0e",
+      "name": "Respond to Webhook"
+    },
+    {
+      "parameters": {
+        "url": "https://digitalinnovationone.github.io/dio-lab-assistente-investimentos-rpa-n8n/data.csv",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        -304,
+        0
+      ],
+      "id": "cc9335dc-6526-4e75-8d26-4d3361b6f621",
+      "name": "HTTP Request"
+    },
+    {
+      "parameters": {
+        "jsCode": "\n/**\n * Obtém o CSV como texto vindo de um HTTP Request\n */\nconst csvRaw = $json.data ?? $json.body ?? $json;\n\nconst text = typeof csvRaw === \"string\"\n  ? csvRaw\n  : JSON.stringify(csvRaw);\n\n// Divide o texto em linhas e remove linhas vazias\nconst lines = text\n  .split(/\\r?\\n/)\n  .map(l => l.trim())\n  .filter(Boolean);\n\n// Evita processar um CSV vazio\nif (lines.length === 0) {\n  return [{ json: { investimentos: [] } }];\n}\n\n// Extrai os cabeçalhos\nconst headers = lines[0]\n  .split(\",\")\n  .map(h => h.trim());\n\n// Converte as linhas em objetos\nconst investimentos = lines.slice(1).map(line => {\n  const cols = line.split(\",\").map(c => c.trim());\n  const obj = {};\n\n  headers.forEach((h, i) => {\n    obj[h] = cols[i] ?? \"\";\n  });\n\n  // Normaliza \"minimo\" para número\n  obj.minimo = Number(\n    String(obj.minimo ?? \"\").replace(/[^\\d]/g, \"\")\n  ) || 0;\n\n  return obj;\n});\n\n// Retorna os dados no formato esperado pelo n8n\nreturn [\n  {\n    json: {\n      investimentos\n    }\n  }\n];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -80,
+        0
+      ],
+      "id": "c1964ce7-cb7c-4db7-9a29-3fa8ecd9b77b",
+      "name": "Code in JavaScript"
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineByPosition",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        96,
+        -144
+      ],
+      "id": "966e62f0-2ba4-4036-9733-dba3558eea89",
+      "name": "Merge"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Obtém a entrada unificada vinda do nó Merge\nconst entrada = $input.first().json;\n\n// Extrai clientes (suporta variações do payload do webhook) e investimentos\nconst clientes = entrada.body?.clientes ?? entrada.clientes ?? [];\nconst investimentos = entrada.investimentos ?? [];\n\n// Converte valores monetários como \"R$ 12.500,00\" para número (ex: 12500)\nfunction converterParaNumero(valor) {\n  if (typeof valor === \"number\") return valor;\n\n  const numero = String(valor ?? \"\")\n    .replace(/[^\\d,.-]/g, \"\")\n    .replace(/\\./g, \"\")\n    .replace(\",\", \".\");\n\n  return Number(numero) || 0;\n}\n\n// Formata valores numéricos para o padrão de moeda brasileiro (R$)\nfunction formatarMoeda(valor) {\n  return Number(valor).toLocaleString(\"pt-BR\", {\n    style: \"currency\",\n    currency: \"BRL\",\n  });\n}\n\n// Normaliza textos (remove espaços e converte para minúsculas)\nfunction normalizarTexto(valor) {\n  return String(valor ?? \"\").trim().toLowerCase();\n}\n\n// Processa e cruza cada cliente com a lista de investimentos\nconst resultados = clientes.map((cliente) => {\n  const saldoNum = converterParaNumero(cliente.saldo);\n  const perfilCliente = normalizarTexto(cliente.perfil);\n\n  // Filtra opções compatíveis com o perfil e cujo valor mínimo seja <= ao saldo do cliente\n  const compativeis = investimentos.filter((investimento) => {\n    const perfilInvestimento = normalizarTexto(investimento.perfil);\n    const minimo = converterParaNumero(investimento.minimo);\n\n    const perfilCompativel =\n      !perfilInvestimento || perfilInvestimento === perfilCliente;\n\n    return perfilCompativel && saldoNum >= minimo;\n  });\n\n  // Seleciona a primeira opção compatível\n  const escolhido = compativeis[0] ?? null;\n\n  // Templates de mensagens estáticas (Etapa 4 - MVP)\n  const mensagens = escolhido\n    ? [\n        `Olá, ${cliente.nome}! Pelo seu perfil (${cliente.perfil}), uma boa opção é o ${escolhido.produto} (mínimo ${formatarMoeda(converterParaNumero(escolhido.minimo))}). Com seu saldo atual de ${formatarMoeda(saldoNum)}, você já consegue investir. Rentabilidade: ${escolhido.rentabilidade}.`,\n        `Oi, ${cliente.nome}! Recomendação para perfil ${cliente.perfil}: ${escolhido.produto}. Seu saldo de ${formatarMoeda(saldoNum)} atende ao valor mínimo de ${formatarMoeda(converterParaNumero(escolhido.minimo))}. Rentabilidade: ${escolhido.rentabilidade}.`,\n        `${cliente.nome}, considerando seu perfil ${cliente.perfil}, o ${escolhido.produto} pode ser uma opção. Você tem ${formatarMoeda(saldoNum)} disponíveis e o investimento exige no mínimo ${formatarMoeda(converterParaNumero(escolhido.minimo))}. Rentabilidade: ${escolhido.rentabilidade}.`,\n      ]\n    : [\n        `Olá, ${cliente.nome}! No momento, não encontramos um investimento compatível com seu perfil e saldo atual de ${formatarMoeda(saldoNum)}.`,\n      ];\n\n  // Escolhe aleatoriamente uma variação de template\n  const mensagemEscolhida =\n    mensagens[Math.floor(Math.random() * mensagens.length)];\n\n  return {\n    nome: cliente.nome,\n    email: cliente.email,\n    perfil: cliente.perfil,\n    saldo_texto: formatarMoeda(saldoNum),\n    saldo_num: saldoNum,\n    recomendacao: escolhido,\n    motivo: escolhido ? \"saldo_ok\" : \"sem_opcao_compativel\",\n    mensagens,\n    mensagem_escolhida: mensagemEscolhida,\n  };\n});\n\n// Retorna o resultado final estruturado para o nó 'Respond to Webhook'\nreturn [\n  {\n    json: {\n      ok: true,\n      total_clientes: resultados.length,\n      total_investimentos: investimentos.length,\n      resultados,\n    },\n  },\n];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        272,
+        16
+      ],
+      "id": "d75897ee-2622-4355-8ee4-441baccfbaea",
+      "name": "Code in JavaScript1"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Respond to Webhook": {
+      "main": [
+        []
+      ]
+    },
+    "HTTP Request": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Merge": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript1": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "db5cb153-93ed-4e94-8800-33adbd5eebe2",
+  "meta": {
+    "instanceId": "8d1bcf62d95936447f59914fc15328ff756f9e109825cbcfabf03d243de88453"
+  },
+  "nodeGroups": [],
+  "id": "PTjDBOhqsSaNDaRY",
+  "tags": []
+}
